@@ -44,7 +44,6 @@ typedef struct
 
   uint8_t stage;
   uint8_t* buffer;
-  uint16_t transferred;
   tuh_control_complete_cb_t complete_cb;
 } usbh_control_xfer_t;
 
@@ -68,7 +67,6 @@ bool tuh_control_xfer (uint8_t dev_addr, tusb_control_request_t const* request, 
   _ctrl_xfer.buffer      = buffer;
   _ctrl_xfer.stage       = STAGE_SETUP;
   _ctrl_xfer.complete_cb = complete_cb;
-  _ctrl_xfer.transferred = 0;
 
   TU_LOG2("Control Setup: ");
   TU_LOG2_VAR(request);
@@ -116,20 +114,16 @@ bool usbh_control_xfer_cb (uint8_t dev_addr, uint8_t ep_addr, xfer_result_t resu
         __attribute__((fallthrough));
 
       case STAGE_DATA:
-        _ctrl_xfer.transferred += xferred_bytes;
-        if (_ctrl_xfer.transferred >= request->wLength) {
-          // All data received
+        _ctrl_xfer.stage = STAGE_ACK;
+
+        if (request->wLength)
+        {
           TU_LOG2("Control data:\r\n");
           TU_LOG2_MEM(_ctrl_xfer.buffer, request->wLength, 2);
+        }
 
-          _ctrl_xfer.stage = STAGE_ACK;
-          hcd_edpt_xfer(rhport, dev_addr, tu_edpt_addr(0, 1-request->bmRequestType_bit.direction), NULL, 0);
-        }
-        else {
-          // More data needed
-          hcd_edpt_xfer(rhport, dev_addr, tu_edpt_addr(0, request->bmRequestType_bit.direction), 
-                        &_ctrl_xfer.buffer[_ctrl_xfer.transferred], xferred_bytes);
-        }
+        // data toggle is always 1
+        hcd_edpt_xfer(rhport, dev_addr, tu_edpt_addr(0, 1-request->bmRequestType_bit.direction), NULL, 0);
       break;
 
       case STAGE_ACK:
