@@ -487,9 +487,15 @@ void tuh_task(void)
 //--------------------------------------------------------------------+
 static uint8_t get_new_address(void)
 {
-  for (uint8_t addr=1; addr <= CFG_TUSB_HOST_DEVICE_MAX; addr++)
+  static int addr_hint = 0;
+  for (uint8_t index=0; index < CFG_TUSB_HOST_DEVICE_MAX; index++)
   {
-    if (_usbh_devices[addr].state == TUSB_DEVICE_STATE_UNPLUG) return addr;
+    uint8_t addr = (addr_hint + index) % CFG_TUSB_HOST_DEVICE_MAX;
+    if (_usbh_devices[addr + 1].state == TUSB_DEVICE_STATE_UNPLUG)
+    {
+      addr_hint = (addr + 1) % CFG_TUSB_HOST_DEVICE_MAX;
+      return addr + 1;
+    }
   }
   return CFG_TUSB_HOST_DEVICE_MAX+1;
 }
@@ -538,6 +544,7 @@ static bool enum_get_9byte_config_desc_complete (uint8_t dev_addr, tusb_control_
 static bool enum_get_config_desc_complete       (uint8_t dev_addr, tusb_control_request_t const * request, xfer_result_t result);
 static bool enum_set_config_complete            (uint8_t dev_addr, tusb_control_request_t const * request, xfer_result_t result);
 static bool parse_configuration_descriptor      (uint8_t dev_addr, tusb_desc_configuration_t const* desc_cfg);
+static bool enum_reset_before_set_address_complete(uint8_t dev_addr, tusb_control_request_t const * request, xfer_result_t result);
 
 static bool enum_hub_clear_reset0_complete(uint8_t dev_addr, tusb_control_request_t const * request, xfer_result_t result)
 {
@@ -574,6 +581,9 @@ static bool enum_hub_get_status1_complete(uint8_t dev_addr, tusb_control_request
   if (port_status.change.reset)
   {
     TU_ASSERT( hub_port_clear_feature(dev0->hub_addr, dev0->hub_port, HUB_FEATURE_PORT_RESET_CHANGE, enum_hub_clear_reset1_complete) );
+  }
+  else {
+    TU_ASSERT( hub_port_get_status(dev0->hub_addr, dev0->hub_port, _usbh_ctrl_buf, enum_hub_get_status1_complete) );
   }
 
   return true;
@@ -735,15 +745,22 @@ static bool enum_get_addr0_device_desc_complete(uint8_t dev_addr, tusb_control_r
   else
   {
     // after RESET_DELAY the hub_port_reset() already complete
-    TU_ASSERT( hub_port_reset(dev0->hub_addr, dev0->hub_port, NULL) );
-    osal_task_delay(RESET_DELAY);
-
-    tuh_task(); // FIXME temporarily to clean up port_reset control transfer
-
-    TU_ASSERT( hub_port_get_status(dev0->hub_addr, dev0->hub_port, _usbh_ctrl_buf, enum_hub_get_status1_complete) );
+    TU_ASSERT( hub_port_reset(dev0->hub_addr, dev0->hub_port, enum_reset_before_set_address_complete) );
   }
 #endif
 
+  return true;
+}
+
+static bool enum_reset_before_set_address_complete(uint8_t dev_addr, tusb_control_request_t const * request, xfer_result_t result) {
+  (void) request;
+  (void) dev_addr;
+  TU_ASSERT(XFER_RESULT_SUCCESS == result);
+
+  usbh_device_t* dev0 = &_usbh_devices[0];
+
+  // Check the port status
+  TU_ASSERT( hub_port_get_status(dev0->hub_addr, dev0->hub_port, _usbh_ctrl_buf, enum_hub_get_status1_complete) );
   return true;
 }
 
