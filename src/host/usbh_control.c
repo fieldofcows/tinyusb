@@ -49,16 +49,63 @@ typedef struct
 
 static usbh_control_xfer_t _ctrl_xfer;
 
+typedef struct {
+  usbh_control_xfer_t xfer;
+  uint8_t             dev_addr;
+} xfer_queue_entry;
+
+#define QUEUE_SIZE 8
+static xfer_queue_entry ctrl_xfer_queue[QUEUE_SIZE];
+int queue_head = 0;
+int queue_tail = 0;
+bool busy = false;
+
 //CFG_TUSB_MEM_SECTION CFG_TUSB_MEM_ALIGN
 //static uint8_t _tuh_ctrl_buf[CFG_TUSB_HOST_ENUM_BUFFER_SIZE];
+
+void tuh_control_xfer_tick();
+bool handle_tuh_control_xfer (uint8_t dev_addr, tusb_control_request_t const* request, void* buffer, tuh_control_complete_cb_t complete_cb);
 
 //--------------------------------------------------------------------+
 // MACRO TYPEDEF CONSTANT ENUM DECLARATION
 //--------------------------------------------------------------------+
+bool tuh_control_xfer (uint8_t dev_addr, tusb_control_request_t const* request, void* buffer, tuh_control_complete_cb_t complete_cb) {
+  xfer_queue_entry* queue_entry = &ctrl_xfer_queue[queue_head++];
+  queue_head %= QUEUE_SIZE;
+  if (queue_head == queue_tail) {
+    // Buffer overflow
+    return false;
+  }
 
-bool tuh_control_xfer (uint8_t dev_addr, tusb_control_request_t const* request, void* buffer, tuh_control_complete_cb_t complete_cb)
+  queue_entry->dev_addr         = dev_addr;
+  queue_entry->xfer.request     = (*request);
+  queue_entry->xfer.buffer      = buffer;
+  queue_entry->xfer.stage       = STAGE_SETUP;
+  queue_entry->xfer.complete_cb = complete_cb;
+
+  tuh_control_xfer_tick();
+
+  return true;
+}
+
+void tuh_control_xfer_tick() {
+  if (!busy && (queue_tail != queue_head)) {
+    xfer_queue_entry* queue_entry = &ctrl_xfer_queue[queue_tail++];
+    queue_tail %= QUEUE_SIZE;
+
+    handle_tuh_control_xfer(queue_entry->dev_addr, &queue_entry->xfer.request, queue_entry->xfer.buffer, queue_entry->xfer.complete_cb);
+  }
+}
+
+
+
+
+
+
+bool handle_tuh_control_xfer (uint8_t dev_addr, tusb_control_request_t const* request, void* buffer, tuh_control_complete_cb_t complete_cb)
 {
   // TODO need to claim the endpoint first
+  busy = true;
 
   usbh_device_t* dev = &_usbh_devices[dev_addr];
   const uint8_t rhport = dev->rhport;
@@ -128,6 +175,8 @@ bool usbh_control_xfer_cb (uint8_t dev_addr, uint8_t ep_addr, xfer_result_t resu
 
       case STAGE_ACK:
         _xfer_complete(dev_addr, result);
+        busy = false;
+        tuh_control_xfer_tick();
       break;
 
       default: return false;
