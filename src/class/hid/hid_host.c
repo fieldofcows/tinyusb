@@ -177,6 +177,26 @@ bool hidh_open_subtask(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t c
 
   if ( HID_SUBCLASS_BOOT == p_interface_desc->bInterfaceSubClass )
   {
+
+    // SET IDLE = 0 request
+    // Device can stall if not support this request
+    tusb_control_request_t const request =
+    {
+      .bmRequestType_bit =
+      {
+        .recipient = TUSB_REQ_RCPT_INTERFACE,
+        .type      = TUSB_REQ_TYPE_CLASS,
+        .direction = TUSB_DIR_OUT
+      },
+      .bRequest = HID_REQ_CONTROL_SET_PROTOCOL,
+      .wValue   = 0, // Boot protocol
+      .wIndex   = 0,
+      .wLength  = 0
+    };
+
+    // stall is a valid response for SET_IDLE, therefore we could ignore result of this request
+    tuh_control_xfer(dev_addr, &request, NULL, NULL);
+
     #if CFG_TUH_HID_KEYBOARD
     if ( HID_PROTOCOL_KEYBOARD == p_interface_desc->bInterfaceProtocol)
     {
@@ -255,7 +275,7 @@ bool hidh_set_config(uint8_t dev_addr, uint8_t itf_num)
 #endif
 
 #if CFG_TUH_HID_MOUSE
-  if (( mouseh_data[dev_addr-1].ep_in == itf_num ) &&  mouseh_data[dev_addr-1].valid)
+  if (( mouseh_data[dev_addr-1].itf_num == itf_num ) &&  mouseh_data[dev_addr-1].valid)
   {
     tuh_hid_mouse_mounted_cb(dev_addr);
   }
