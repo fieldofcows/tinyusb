@@ -47,23 +47,36 @@
 #endif
 
 //--------------------------------------------------------------------+
-// KEYBOARD Application API
+// HID Application API
 //--------------------------------------------------------------------+
-/** \addtogroup ClassDriver_HID_Keyboard Keyboard
+/** \addtogroup ClassDriver_HID HID
  *  @{ */
 
-/** \defgroup Keyboard_Host Host
+/** \defgroup HID_Host Host
  *  The interface API includes status checking function, data transferring function and callback functions
  *  @{ */
 
 extern uint8_t const hid_keycode_to_ascii_tbl[2][128]; // TODO used weak attr if build failed without KEYBOARD enabled
 
-/** \brief      Check if device supports Keyboard interface or not
+typedef enum {
+  HID_UNDEFINED,
+  HID_KEYBOARD,
+  HID_MOUSE,
+  HID_GENERIC
+} HID_TYPE;
+
+/** \brief      Check if the device is a HID device
  * \param[in]   dev_addr    device address
- * \retval      true if device supports Keyboard interface
- * \retval      false if device does not support Keyboard interface or is not mounted
+ * \retval      true if device supports HID interface
+ * \retval      false if device does not support HID interface or is not mounted
  */
-bool tuh_hid_keyboard_is_mounted(uint8_t dev_addr);
+bool tuh_hid_is_mounted(uint8_t dev_addr);
+
+/** \brief      Get the type of the HID device if known
+ * \param[in]   dev_addr    device address
+ * \retval      Device type
+ */
+HID_TYPE tuh_hid_get_type(uint8_t dev_addr);
 
 /** \brief      Check if the interface is currently busy or not
  * \param[in]   dev_addr device address
@@ -72,9 +85,9 @@ bool tuh_hid_keyboard_is_mounted(uint8_t dev_addr);
  * \note        This function is primarily used for polling/waiting result after \ref tuh_hid_keyboard_get_report.
  *              Alternatively, asynchronous event API can be used
  */
-bool tuh_hid_keyboard_is_busy(uint8_t dev_addr);
+bool tuh_hid_is_busy(uint8_t dev_addr);
 
-/** \brief        Perform a get report from Keyboard interface
+/** \brief        Perform a get report from HID interface
  * \param[in]		  dev_addr device address
  * \param[in,out] p_report address that is used to store data from device. Must be accessible by usb controller (see \ref CFG_TUSB_MEM_SECTION)
  * \returns       \ref tusb_error_t type to indicate success or error condition.
@@ -84,7 +97,19 @@ bool tuh_hid_keyboard_is_busy(uint8_t dev_addr);
  * \retval        TUSB_ERROR_INVALID_PARA if input parameters are not correct
  * \note          This function is non-blocking and returns immediately. The result of usb transfer will be reported by the interface's callback function
  */
-tusb_error_t  tuh_hid_keyboard_get_report(uint8_t dev_addr, void * p_report);
+tusb_error_t  tuh_hid_get_report(uint8_t dev_addr, void * p_report);
+
+/** \brief        Perform the size of the HID report in bytes
+ * \param[in]		  dev_addr device address
+ * \returns       The size in bytes
+ */
+uint16_t tuh_hid_get_report_size(uint8_t dev_addr);
+
+/** \brief        Perform the report info structure used for parsing a report
+ * \param[in]		  dev_addr device address
+ * \returns       The report info structure.
+ */
+HID_ReportInfo_t* tuh_hid_get_report_info(uint8_t dev_addr);
 
 //------------- Application Callback -------------//
 /** \brief      Callback function that is invoked when an transferring event occurred
@@ -94,113 +119,24 @@ tusb_error_t  tuh_hid_keyboard_get_report(uint8_t dev_addr, void * p_report);
  *              - XFER_RESULT_SUCCESS : previously scheduled transfer completes successfully.
  *              - XFER_RESULT_FAILED   : previously scheduled transfer encountered a transaction error.
  *              - XFER_RESULT_STALLED : previously scheduled transfer is stalled by device.
- * \note        Application should schedule the next report by calling \ref tuh_hid_keyboard_get_report within this callback
+ * \note        Application should schedule the next report by calling \ref tuh_hid_get_report within this callback
  */
-void tuh_hid_keyboard_isr(uint8_t dev_addr, xfer_result_t event);
+void tuh_hid_isr(uint8_t dev_addr, xfer_result_t event);
 
-/** \brief 			Callback function that will be invoked when a device with Keyboard interface is mounted
+/** \brief 			Callback function that will be invoked when a device with HID interface is mounted
  * \param[in] 	dev_addr Address of newly mounted device
  * \note        This callback should be used by Application to set-up interface-related data
  */
-void tuh_hid_keyboard_mounted_cb(uint8_t dev_addr);
+void tuh_hid_mounted_cb(uint8_t dev_addr);
 
-/** \brief 			Callback function that will be invoked when a device with Keyboard interface is unmounted
+/** \brief 			Callback function that will be invoked when a device with HID interface is unmounted
  * \param[in] 	dev_addr Address of newly unmounted device
  * \note        This callback should be used by Application to tear-down interface-related data
  */
-void tuh_hid_keyboard_unmounted_cb(uint8_t dev_addr);
+void tuh_hid_unmounted_cb(uint8_t dev_addr);
 
-/** @} */ // Keyboard_Host
-/** @} */ // ClassDriver_HID_Keyboard
-
-//--------------------------------------------------------------------+
-// MOUSE Application API
-//--------------------------------------------------------------------+
-/** \addtogroup ClassDriver_HID_Mouse Mouse
- *  @{ */
-
-/** \defgroup Mouse_Host Host
- *  The interface API includes status checking function, data transferring function and callback functions
- *  @{ */
-
-/** \brief      Check if device supports Mouse interface or not
- * \param[in]   dev_addr    device address
- * \retval      true if device supports Mouse interface
- * \retval      false if device does not support Mouse interface or is not mounted
- */
-bool          tuh_hid_mouse_is_mounted(uint8_t dev_addr);
-
-/** \brief      Check if the interface is currently busy or not
- * \param[in]   dev_addr device address
- * \retval      true if the interface is busy meaning the stack is still transferring/waiting data from/to device
- * \retval      false if the interface is not busy meaning the stack successfully transferred data from/to device
- * \note        This function is primarily used for polling/waiting result after \ref tuh_hid_mouse_get_report.
- *              Alternatively, asynchronous event API can be used
- */
-bool          tuh_hid_mouse_is_busy(uint8_t dev_addr);
-
-/** \brief        Perform a get report from Mouse interface
- * \param[in]		  dev_addr device address
- * \param[in,out] p_report address that is used to store data from device. Must be accessible by usb controller (see \ref CFG_TUSB_MEM_SECTION)
- * \returns       \ref tusb_error_t type to indicate success or error condition.
- * \retval        TUSB_ERROR_NONE on success
- * \retval        TUSB_ERROR_INTERFACE_IS_BUSY if the interface is already transferring data with device
- * \retval        TUSB_ERROR_DEVICE_NOT_READY if device is not yet configured (by SET CONFIGURED request)
- * \retval        TUSB_ERROR_INVALID_PARA if input parameters are not correct
- * \note          This function is non-blocking and returns immediately. The result of usb transfer will be reported by the interface's callback function
- */
-tusb_error_t  tuh_hid_mouse_get_report(uint8_t dev_addr, void* p_report);
-
-//------------- Application Callback -------------//
-/** \brief      Callback function that is invoked when an transferring event occurred
- * \param[in]		dev_addr	Address of device
- * \param[in]   event an value from \ref xfer_result_t
- * \note        event can be one of following
- *              - XFER_RESULT_SUCCESS : previously scheduled transfer completes successfully.
- *              - XFER_RESULT_FAILED   : previously scheduled transfer encountered a transaction error.
- *              - XFER_RESULT_STALLED : previously scheduled transfer is stalled by device.
- * \note        Application should schedule the next report by calling \ref tuh_hid_mouse_get_report within this callback
- */
-void tuh_hid_mouse_isr(uint8_t dev_addr, xfer_result_t event);
-
-/** \brief 			Callback function that will be invoked when a device with Mouse interface is mounted
- * \param[in]	  dev_addr Address of newly mounted device
- * \note        This callback should be used by Application to set-up interface-related data
- */
-void tuh_hid_mouse_mounted_cb(uint8_t dev_addr);
-
-/** \brief 			Callback function that will be invoked when a device with Mouse interface is unmounted
- * \param[in] 	dev_addr Address of newly unmounted device
- * \note        This callback should be used by Application to tear-down interface-related data
- */
-void tuh_hid_mouse_unmounted_cb(uint8_t dev_addr);
-
-/** @} */ // Mouse_Host
-/** @} */ // ClassDriver_HID_Mouse
-
-//--------------------------------------------------------------------+
-// GENERIC Application API
-//--------------------------------------------------------------------+
-/** \addtogroup ClassDriver_HID_Generic Generic (not supported yet)
- *  @{ */
-
-/** \defgroup Generic_Host Host
- *  The interface API includes status checking function, data transferring function and callback functions
- *  @{ */
-
-bool            tuh_hid_generic_is_mounted(uint8_t dev_addr);
-bool            tuh_hid_generic_is_busy(uint8_t dev_addr);
-tusb_error_t    tuh_hid_generic_get_report(uint8_t dev_addr, void * report);
-uint16_t        tuh_hid_generic_get_report_size(uint8_t dev_addr);
-HID_ReportInfo_t* tuh_hid_generic_get_report_info(uint8_t dev_addr);
-void            tuh_hid_generic_mounted_cb(uint8_t dev_addr);
-void            tuh_hid_generic_unmounted_cb(uint8_t dev_addr);
-
-//------------- Application Callback -------------//
-void tuh_hid_generic_isr(uint8_t dev_addr, xfer_result_t event);
-
-/** @} */ // Generic_Host
-/** @} */ // ClassDriver_HID_Generic
+/** @} */ // HID_Host
+/** @} */ // ClassDriver_HID
 
 //--------------------------------------------------------------------+
 // Internal Class Driver API
