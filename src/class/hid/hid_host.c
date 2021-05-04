@@ -25,23 +25,32 @@
  */
 
 #include "tusb_option.h"
+#include <stdlib.h>
 
 #if (TUSB_OPT_HOST_ENABLED && HOST_CLASS_HID)
 
 #include "common/tusb_common.h"
 #include "hid_host.h"
+#include "hidparser/HIDParser.h"
+
+CFG_TUSB_MEM_SECTION TU_ATTR_ALIGNED(4) static uint8_t report_buf[128];
+
+static bool hidh_get_report_complete (uint8_t dev_addr, tusb_control_request_t const * request, xfer_result_t result);
 
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF
 //--------------------------------------------------------------------+
 
 typedef struct {
-  uint8_t  itf_num;
-  uint8_t  ep_in;
-  uint8_t  ep_out;
-  bool     valid;
-
-  uint16_t report_size;
+  uint8_t               itf_num;
+  uint8_t               ep_in;
+  uint8_t               ep_out;
+  bool                  valid;
+  HID_ReportInfo_t*     report_info;
+  uint8_t               interface_num;
+  tusb_desc_endpoint_t  endpoint_desc;
+  uint8_t               rhport;
+  uint16_t              report_size;
 }hidh_interface_t;
 
 //--------------------------------------------------------------------+
@@ -133,9 +142,51 @@ tusb_error_t tuh_hid_mouse_get_report(uint8_t dev_addr, void * report)
 //--------------------------------------------------------------------+
 #if CFG_TUSB_HOST_HID_GENERIC
 
-//STATIC_ struct {
-//  hidh_interface_info_t
-//} generic_data[CFG_TUSB_HOST_DEVICE_MAX];
+static hidh_interface_t generic_data[CFG_TUSB_HOST_DEVICE_MAX]; // does not have addr0, index = dev_address-1
+
+bool CALLBACK_HIDParser_FilterHIDReportItem(HID_ReportItem_t* const item)
+{
+	bool is_supported = false;
+  // Iterate through the item's collection path, until either the root collection node or a collection with the
+  // a supported usage is found
+	for (HID_CollectionPath_t* path = item->CollectionPath; path != NULL; path = path->Parent)
+	{
+		if ((path->Usage.Page  == USAGE_PAGE_GENERIC_DCTRL) && (path->Usage.Usage == USAGE_JOYSTICK))
+		{
+			is_supported = true;
+			break;
+		}
+	}
+	if (!is_supported)
+	  return false;
+	return ((item->Attributes.Usage.Page == USAGE_PAGE_BUTTON) ||
+	        (item->Attributes.Usage.Page == USAGE_PAGE_GENERIC_DCTRL));
+}
+
+bool tuh_hid_generic_is_mounted(uint8_t dev_addr)
+{
+  return tuh_device_is_configured(dev_addr) && (generic_data[dev_addr-1].ep_in != 0);
+}
+
+bool tuh_hid_generic_is_busy(uint8_t dev_addr)
+{
+  return  tuh_hid_generic_is_mounted(dev_addr) && hcd_edpt_busy(dev_addr, generic_data[dev_addr-1].ep_in);
+}
+
+tusb_error_t tuh_hid_generic_get_report(uint8_t dev_addr, void * report)
+{
+  return hidh_interface_get_report(dev_addr, report, &generic_data[dev_addr-1]);
+}
+
+uint16_t tuh_hid_generic_get_report_size(uint8_t dev_addr) 
+{
+  return generic_data[dev_addr-1].report_size;
+}
+
+HID_ReportInfo_t* tuh_hid_generic_get_report_info(uint8_t dev_addr) 
+{
+  return generic_data[dev_addr-1].report_info;
+}
 
 #endif
 
@@ -153,7 +204,7 @@ void hidh_init(void)
 #endif
 
 #if CFG_TUSB_HOST_HID_GENERIC
-  hidh_generic_init();
+  tu_memclr(&generic_data, sizeof(hidh_interface_t)*CFG_TUSB_HOST_DEVICE_MAX);
 #endif
 }
 
@@ -177,9 +228,7 @@ bool hidh_open_subtask(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t c
 
   if ( HID_SUBCLASS_BOOT == p_interface_desc->bInterfaceSubClass )
   {
-
-    // SET IDLE = 0 request
-    // Device can stall if not support this request
+    // Make sure the boot protocol is selected.
     tusb_control_request_t const request =
     {
       .bmRequestType_bit =
@@ -193,8 +242,6 @@ bool hidh_open_subtask(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t c
       .wIndex   = 0,
       .wLength  = 0
     };
-
-    // stall is a valid response for SET_IDLE, therefore we could ignore result of this request
     tuh_control_xfer(dev_addr, &request, NULL, NULL);
 
     #if CFG_TUH_HID_KEYBOARD
@@ -219,13 +266,51 @@ bool hidh_open_subtask(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t c
     }
   }else
   {
-    // Not supported subclass
-    return false;
+    generic_data[dev_addr-1].rhport = rhport;
+    generic_data[dev_addr-1].interface_num = p_interface_desc->bInterfaceNumber;
+    memcpy(&generic_data[dev_addr-1].endpoint_desc, p_endpoint_desc, sizeof(tusb_desc_endpoint_t));
+
+    // Get a report from the device so we can see what it is.
+    tusb_control_request_t const request =
+    {
+      .bmRequestType_bit =
+      {
+        .recipient = TUSB_REQ_RCPT_INTERFACE,
+        .type      = TUSB_REQ_TYPE_STANDARD,
+        .direction = TUSB_DIR_IN
+      },
+      .bRequest = TUSB_REQ_GET_DESCRIPTOR,
+      .wValue   = HID_DESC_TYPE_REPORT << 8,
+      .wIndex   = 0,
+      .wLength  = p_desc_hid->wReportLength
+    };
+    tuh_control_xfer(dev_addr, &request, report_buf, hidh_get_report_complete);
+
+    return true;
   }
 
   *p_length = sizeof(tusb_desc_interface_t) + sizeof(tusb_hid_descriptor_hid_t) + sizeof(tusb_desc_endpoint_t);
 
   return true;
+}
+
+bool hidh_get_report_complete (uint8_t dev_addr, tusb_control_request_t const * request, xfer_result_t result) {
+  // Parse the report data to see if it is a device we support
+  HID_ReportInfo_t* info = malloc(sizeof(HID_ReportInfo_t));
+  if (!info) {
+    return false;
+  }
+  if (USB_ProcessHIDReport(report_buf, request->wLength, info) == HID_PARSE_Successful) {
+    // The report is supported
+    TU_ASSERT ( hidh_interface_open(generic_data[dev_addr-1].rhport, dev_addr, generic_data[dev_addr-1].interface_num, 
+                              &generic_data[dev_addr-1].endpoint_desc, &generic_data[dev_addr-1]) );
+    TU_LOG2_HEX(generic_data[dev_addr-1].ep_in);
+    generic_data[dev_addr-1].report_info = info;
+    //tuh_hid_generic_mounted_cb(dev_addr);
+  }
+  else {
+    free(info);
+  }
 }
 
 bool hidh_set_config(uint8_t dev_addr, uint8_t itf_num)
@@ -281,6 +366,12 @@ bool hidh_set_config(uint8_t dev_addr, uint8_t itf_num)
   }
 #endif
 
+#if CFG_TUSB_HOST_HID_GENERIC
+  if (( generic_data[dev_addr-1].itf_num == itf_num ) &&  generic_data[dev_addr-1].valid)
+  {
+    tuh_hid_generic_mounted_cb(dev_addr);
+  }
+#endif
   return true;
 }
 
@@ -330,7 +421,8 @@ void hidh_close(uint8_t dev_addr)
 #endif
 
 #if CFG_TUSB_HOST_HID_GENERIC
-  hidh_generic_close(dev_addr);
+    hidh_interface_close(&generic_data[dev_addr-1]);
+    tuh_hid_mouse_unmounted_cb( dev_addr );
 #endif
 }
 

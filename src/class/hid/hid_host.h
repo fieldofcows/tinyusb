@@ -33,6 +33,14 @@
 #include "common/tusb_common.h"
 #include "host/usbh.h"
 #include "hid.h"
+#include "hidparser/HIDParser.h"
+
+/** HID Report Descriptor Usage Page value for a Generic Desktop Control. */
+#define USAGE_PAGE_GENERIC_DCTRL    0x01
+#define USAGE_JOYSTICK              0x04
+#define USAGE_X                     0x30
+#define USAGE_Y                     0x31
+#define USAGE_PAGE_BUTTON           0x09
 
 #ifdef __cplusplus
  extern "C" {
@@ -180,11 +188,13 @@ void tuh_hid_mouse_unmounted_cb(uint8_t dev_addr);
  *  The interface API includes status checking function, data transferring function and callback functions
  *  @{ */
 
-bool          tuh_hid_generic_is_mounted(uint8_t dev_addr);
-tusb_error_t  tuh_hid_generic_get_report(uint8_t dev_addr, void* p_report, bool int_on_complete);
-tusb_error_t  tuh_hid_generic_set_report(uint8_t dev_addr, void* p_report, bool int_on_complete);
-tusb_interface_status_t tuh_hid_generic_get_status(uint8_t dev_addr);
-tusb_interface_status_t tuh_hid_generic_set_status(uint8_t dev_addr);
+bool            tuh_hid_generic_is_mounted(uint8_t dev_addr);
+bool            tuh_hid_generic_is_busy(uint8_t dev_addr);
+tusb_error_t    tuh_hid_generic_get_report(uint8_t dev_addr, void * report);
+uint16_t        tuh_hid_generic_get_report_size(uint8_t dev_addr);
+HID_ReportInfo_t* tuh_hid_generic_get_report_info(uint8_t dev_addr);
+void            tuh_hid_generic_mounted_cb(uint8_t dev_addr);
+void            tuh_hid_generic_unmounted_cb(uint8_t dev_addr);
 
 //------------- Application Callback -------------//
 void tuh_hid_generic_isr(uint8_t dev_addr, xfer_result_t event);
