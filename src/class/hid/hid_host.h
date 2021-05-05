@@ -37,6 +37,7 @@
 
 /** HID Report Descriptor Usage Page value for a Generic Desktop Control. */
 #define USAGE_PAGE_GENERIC_DCTRL    0x01
+#define USAGE_MOUSE                 0x02
 #define USAGE_JOYSTICK              0x04
 #define USAGE_X                     0x30
 #define USAGE_Y                     0x31
@@ -62,7 +63,7 @@ typedef enum {
   HID_UNDEFINED,
   HID_KEYBOARD,
   HID_MOUSE,
-  HID_GENERIC
+  HID_JOYSTICK
 } HID_TYPE;
 
 /** \brief      Check if the device is a HID device

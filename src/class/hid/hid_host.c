@@ -170,23 +170,35 @@ HID_ReportInfo_t* tuh_hid_get_report_info(uint8_t dev_addr)
 // GENERIC
 //--------------------------------------------------------------------+
 
+static HID_TYPE filter_type = HID_UNDEFINED;
+
 bool CALLBACK_HIDParser_FilterHIDReportItem(HID_ReportItem_t* const item)
 {
-	bool is_supported = false;
-  // Iterate through the item's collection path, until either the root collection node or a collection with the
-  // a supported usage is found
-	for (HID_CollectionPath_t* path = item->CollectionPath; path != NULL; path = path->Parent)
-	{
-		if ((path->Usage.Page  == USAGE_PAGE_GENERIC_DCTRL) && (path->Usage.Usage == USAGE_JOYSTICK))
-		{
-			is_supported = true;
-			break;
-		}
-	}
-	if (!is_supported)
-	  return false;
-	return ((item->Attributes.Usage.Page == USAGE_PAGE_BUTTON) ||
+  // Attempt to determine what type of device this is
+  if (filter_type == HID_UNDEFINED) {
+    // Iterate through the item's collection path, until either the root collection node or a collection with the
+    // a supported usage is found
+    for (HID_CollectionPath_t* path = item->CollectionPath; path != NULL; path = path->Parent)
+    {
+      if ((path->Usage.Page  == USAGE_PAGE_GENERIC_DCTRL) && (path->Usage.Usage == USAGE_JOYSTICK)) {
+        filter_type = HID_JOYSTICK;
+        break;
+      }
+      else if ((path->Usage.Page  == USAGE_PAGE_GENERIC_DCTRL) && (path->Usage.Usage == USAGE_MOUSE)) {
+        filter_type = HID_MOUSE;
+        break;
+      }
+    }
+  }
+  if (filter_type == HID_JOYSTICK) {
+  	return ((item->Attributes.Usage.Page == USAGE_PAGE_BUTTON) ||
 	        (item->Attributes.Usage.Page == USAGE_PAGE_GENERIC_DCTRL));
+  }
+  else if (filter_type == HID_MOUSE) {
+  	return ((item->Attributes.Usage.Page == USAGE_PAGE_BUTTON) ||
+	        (item->Attributes.Usage.Page == USAGE_PAGE_GENERIC_DCTRL));
+  }
+  return false;
 }
 
 //--------------------------------------------------------------------+
@@ -200,6 +212,23 @@ void hidh_init(void)
 #if 0
 CFG_TUSB_MEM_SECTION uint8_t report_descriptor[256];
 #endif
+
+static void hidh_set_protocol(uint8_t dev_addr, uint16_t protocol) {
+  tusb_control_request_t const request =
+  {
+    .bmRequestType_bit =
+    {
+      .recipient = TUSB_REQ_RCPT_INTERFACE,
+      .type      = TUSB_REQ_TYPE_CLASS,
+      .direction = TUSB_DIR_OUT
+    },
+    .bRequest = HID_REQ_CONTROL_SET_PROTOCOL,
+    .wValue   = protocol,
+    .wIndex   = 0,
+    .wLength  = 0
+  };
+  tuh_control_xfer(dev_addr, &request, NULL, NULL);
+}
 
 bool hidh_open_subtask(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t const *p_interface_desc, uint16_t *p_length)
 {
@@ -215,55 +244,25 @@ bool hidh_open_subtask(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t c
   tusb_desc_endpoint_t const * p_endpoint_desc = (tusb_desc_endpoint_t const *) p_desc;
   TU_ASSERT(TUSB_DESC_ENDPOINT == p_endpoint_desc->bDescriptorType, TUSB_ERROR_INVALID_PARA);
 
-  if ( HID_SUBCLASS_BOOT == p_interface_desc->bInterfaceSubClass )
-  {
-    // Make sure the boot protocol is selected.
-    tusb_control_request_t const request =
-    {
-      .bmRequestType_bit =
-      {
-        .recipient = TUSB_REQ_RCPT_INTERFACE,
-        .type      = TUSB_REQ_TYPE_CLASS,
-        .direction = TUSB_DIR_OUT
-      },
-      .bRequest = HID_REQ_CONTROL_SET_PROTOCOL,
-      .wValue   = 0, // Boot protocol
-      .wIndex   = 0,
-      .wLength  = 0
-    };
-    tuh_control_xfer(dev_addr, &request, NULL, NULL);
-
+  if ((HID_SUBCLASS_BOOT == p_interface_desc->bInterfaceSubClass) &&
+      ( HID_PROTOCOL_KEYBOARD == p_interface_desc->bInterfaceProtocol))
+  {    
     #if CFG_TUH_HID_KEYBOARD
-    if ( HID_PROTOCOL_KEYBOARD == p_interface_desc->bInterfaceProtocol)
-    {
-      hidh_interface_t* intf = hid_device_alloc(dev_addr);
-      TU_ASSERT(intf);
-      intf->hid_type = HID_KEYBOARD;
-      TU_ASSERT( hidh_interface_open(rhport, dev_addr, p_interface_desc->bInterfaceNumber, p_endpoint_desc, intf) );
-      TU_LOG2_HEX(intf->ep_in);
-    } else
-    #endif
+    // Make sure the boot protocol is selected.
+    hidh_set_protocol(dev_addr, 0);
 
-    #if CFG_TUH_HID_MOUSE
-    if ( HID_PROTOCOL_MOUSE == p_interface_desc->bInterfaceProtocol)
-    {
-      hidh_interface_t* intf = hid_device_alloc(dev_addr);
-      TU_ASSERT(intf);
-      intf->hid_type = HID_MOUSE;
-      TU_ASSERT ( hidh_interface_open(rhport, dev_addr, p_interface_desc->bInterfaceNumber, p_endpoint_desc, intf) );
-      TU_LOG2_HEX(intf->ep_in);
-    } else
-    #endif
-
-    {
-      // Not supported protocol
-      return false;
-    }
-  }else
-  {
     hidh_interface_t* intf = hid_device_alloc(dev_addr);
     TU_ASSERT(intf);
-    intf->hid_type = HID_GENERIC;
+    intf->hid_type = HID_KEYBOARD;
+    TU_ASSERT( hidh_interface_open(rhport, dev_addr, p_interface_desc->bInterfaceNumber, p_endpoint_desc, intf) );
+    TU_LOG2_HEX(intf->ep_in);
+    return false;
+    #endif
+  }
+  else {
+    hidh_interface_t* intf = hid_device_alloc(dev_addr);
+    TU_ASSERT(intf);
+    intf->hid_type = HID_UNDEFINED;
     intf->rhport = rhport;
     intf->interface_num = p_interface_desc->bInterfaceNumber;
     memcpy(&intf->endpoint_desc, p_endpoint_desc, sizeof(tusb_desc_endpoint_t));
@@ -294,12 +293,26 @@ bool hidh_get_report_complete (uint8_t dev_addr, tusb_control_request_t const * 
   hidh_interface_t* intf = hid_device_get(dev_addr);
   TU_ASSERT(intf);
 
-  // Parse the report data to see if it is a device we support
+  // Parse the report data to see if it is a device we support.
+  // Clear filter_type - the callback called by USB_ProcessHIDReport will determine the device type
+  // for us
+  filter_type = HID_UNDEFINED;
   if (USB_ProcessHIDReport(report_buf, request->wLength, &intf->report_info) == HID_PARSE_Successful) {
     intf->has_report_info = true;
+    intf->hid_type = filter_type;
+
+    if (intf->hid_type == HID_MOUSE) {
+      // Set the report protocol rather than the boot protocol
+      hidh_set_protocol(dev_addr, 1);
+    }
+
     // The report is supported
     TU_ASSERT (hidh_interface_open(intf->rhport, dev_addr, intf->interface_num, &intf->endpoint_desc, intf));
     TU_LOG2_HEX(intf->ep_in);
+  }
+  else {
+    // Unsupported HID device
+    hidh_interface_close(intf);
   }
   return true;
 }
