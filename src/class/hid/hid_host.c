@@ -380,8 +380,8 @@ void hidh_close(uint8_t dev_addr)
 {
   hidh_interface_t* intf = hid_device_get(dev_addr);
   if (intf && intf->ep_in != 0) {
-    hidh_interface_close(intf);
     tuh_hid_unmounted_cb(dev_addr);
+    hidh_interface_close(intf);
   }
 }
 

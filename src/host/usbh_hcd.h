@@ -51,6 +51,7 @@
 // TODO move to usbh.c
 typedef struct {
   //------------- port -------------//
+  uint8_t devaddr;
   uint8_t rhport;
   uint8_t hub_addr;
   uint8_t hub_port;
@@ -95,7 +96,8 @@ typedef struct {
 
 } usbh_device_t;
 
-extern usbh_device_t _usbh_devices[CFG_TUSB_HOST_DEVICE_MAX+1]; // including zero-address
+usbh_device_t* usbh_device(uint8_t dev_addr);
+uint8_t usbh_device_index(uint8_t dev_addr);
 
 //--------------------------------------------------------------------+
 // callback from HCD ISR

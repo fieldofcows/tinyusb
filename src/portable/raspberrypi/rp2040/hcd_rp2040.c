@@ -71,25 +71,31 @@ static uint32_t sie_ctrl_base = USB_SIE_CTRL_SOF_EN_BITS |
 
 static struct hw_endpoint *get_dev_ep(uint8_t dev_addr, uint8_t ep_addr)
 {
+    // dev_addr does not match 1:1 with our array index. Find the same index
+    // that is used for the usbh_device array.
+    uint8_t dev_index = usbh_device_index(dev_addr);
     uint8_t num = tu_edpt_number(ep_addr);
     if (num == 0) {
         return &epx;
     }
     uint8_t in = (ep_addr & TUSB_DIR_IN_MASK) ? 1 : 0;
-    uint mapping = dev_ep_map[dev_addr-1][num][in];
+    uint mapping = dev_ep_map[dev_index][num][in];
     pico_trace("Get dev addr %d ep %d = %d\n", dev_addr, ep_addr, mapping);
     return mapping >= 128 ? eps + (mapping & 0x7fu) : NULL;
 }
 
 static void set_dev_ep(uint8_t dev_addr, uint8_t ep_addr, struct hw_endpoint *ep)
 {
+    // dev_addr does not match 1:1 with our array index. Find the same index
+    // that is used for the usbh_device array.
+    uint8_t dev_index = usbh_device_index(dev_addr);
     uint8_t num = tu_edpt_number(ep_addr);
     uint8_t in = (ep_addr & TUSB_DIR_IN_MASK) ? 1 : 0;
     uint32_t index = ep - eps;
     hard_assert(index < count_of(eps));
     // todo revisit why dev_addr can be 0 here
     if (dev_addr) {
-        dev_ep_map[dev_addr-1][num][in] = 128u | index;
+        dev_ep_map[dev_index][num][in] = 128u | index;
     }
     pico_trace("Set dev addr %d ep %d = %d\n", dev_addr, ep_addr, index);
 }
@@ -234,6 +240,12 @@ static void hcd_rp2040_irq(void)
     {
         usb_hw_clear->sie_status = USB_SIE_STATUS_DATA_SEQ_ERROR_BITS;
         panic("Data Seq Error \n");
+    }
+
+    if (status & USB_INTS_ERROR_BIT_STUFF_BITS) 
+    {
+        usb_hw_clear->sie_status = USB_SIE_STATUS_BIT_STUFF_ERROR_BITS;
+        panic("Bit stuffing error \n");
     }
 
     if (status ^ handled)
@@ -384,6 +396,7 @@ bool hcd_init(void)
                    USB_INTE_STALL_BITS            | 
                    USB_INTE_TRANS_COMPLETE_BITS   |
                    USB_INTE_ERROR_RX_TIMEOUT_BITS |
+                   USB_INTE_ERROR_BIT_STUFF_BITS  |
                    USB_INTE_ERROR_DATA_SEQ_BITS   ;
 
     return true;
@@ -423,6 +436,15 @@ tusb_speed_t hcd_port_speed_get(uint8_t rhport)
 void hcd_device_close(uint8_t rhport, uint8_t dev_addr)
 {
     pico_trace("hcd_device_close %d\n", dev_addr);
+
+    // Clear the endpoint status so it can be reused.
+    uint8_t index = usbh_device_index(dev_addr);
+    if (index != 0) {
+        for (int ep = 0; ep < (1 + PICO_USB_HOST_INTERRUPT_ENDPOINTS); ++ep) {
+            dev_ep_map[index][ep][0] = 0;
+            dev_ep_map[index][ep][1] = 0;
+        }
+    }
 }
 
 void hcd_int_enable(uint8_t rhport)
