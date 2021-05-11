@@ -316,6 +316,7 @@
 				#elif (ARCH == ARCH_XMEGA)
 				return SREG;
 				#endif
+				return 0;
 			}
 
 			/** Sets the global interrupt enable state of the microcontroller to the mask passed into the function.
